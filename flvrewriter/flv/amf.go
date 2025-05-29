@@ -118,7 +118,7 @@ func (amf *AmfEncoderDecoder) EncodeVal(val interface{}) []byte {
 		ret[1] = byteVal
 		return ret
 	} else {
-		log.Fatalf("Unknown type: %v", reflect.TypeOf(val))
+		log.Fatalf("Unknown amf value type: %v, val:%x", reflect.TypeOf(val), val)
 		return nil
 	}
 }
@@ -134,9 +134,9 @@ func (amf *AmfEncoderDecoder) EncodeMetaData(meta map[string]interface{}, order 
 	buf.WriteString(onMetaData)
 
 	buf.WriteByte(Amf0Type_ECMAArray)
-	arrSize := uint16(len(meta))
+	arrSize := uint32(len(meta))
 	arrSizeb := make([]byte, unsafe.Sizeof(arrSize))
-	binary.BigEndian.PutUint16(arrSizeb, arrSize)
+	binary.BigEndian.PutUint32(arrSizeb, arrSize)
 	buf.Write(arrSizeb)
 
 	if len(order) > 0 {
@@ -178,9 +178,10 @@ func (amf *AmfEncoderDecoder) DecodeMetaData(buff []byte) map[string]interface{}
 	amftype := buff[amf.readHead]
 	amf.readHead++
 	if amftype == Amf0Type_ECMAArray {
-		alen := make([]byte, unsafe.Sizeof(int(0)))
+		alen := make([]byte, unsafe.Sizeof(int32(0)))
 		copy(alen, buff[amf.readHead:amf.readHead+len(alen)])
 		amf.readHead += len(alen)
+		log.Printf("amf.readHead:%d", amf.readHead)
 		arrayLen := binary.BigEndian.Uint32(alen)
 		log.Printf("onMetaData arrayLen: %d", arrayLen)
 	} else if amftype == Amf0Type_Object {
@@ -195,6 +196,16 @@ func (amf *AmfEncoderDecoder) DecodeMetaData(buff []byte) map[string]interface{}
 		val := amf.DecodeVal(buff)
 		log.Printf("decode meta data key: %s, val: %v", key, val)
 		keyval[key] = val
+		// 过滤掉Metadata后缀
+		if buff[amf.readHead] == 0x00 &&
+			buff[amf.readHead+1] == 0x00 &&
+			buff[amf.readHead+2] == Amf0Type_ObjectEnd {
+			break
+		}
 	}
 	return keyval
+}
+
+func (amf *AmfEncoderDecoder) GetDebugOrder() []string {
+	return amf.debugOrder
 }

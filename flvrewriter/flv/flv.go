@@ -36,11 +36,11 @@ func (t *TagHeader) GetBytes() []byte {
 
 	dataSizeb := make([]byte, 4)
 	binary.BigEndian.PutUint32(dataSizeb, t.DataSize)
-	copy(tag[5:8], dataSizeb[:3])
+	copy(tag[5:8], dataSizeb[1:])
 
 	timeStampb := make([]byte, 4)
 	binary.BigEndian.PutUint32(timeStampb, t.TimeStamp)
-	copy(tag[8:11], timeStampb[:3])
+	copy(tag[8:11], timeStampb[1:])
 
 	tag[11] = t.TimeExtra
 	copy(tag[12:15], t.StreamId[:])
@@ -64,15 +64,18 @@ type FlvHeader struct { // 包括flv头和ScriptTag
 	DebugOrder      []string
 }
 
-func (f *FlvHeader) GetBytes() []byte {
+func (f *FlvHeader) GetBytes(noAddExtra bool) []byte {
 	var buf bytes.Buffer
+	// 从输入直接读取，不用手动填充
 	//f.Header = [FlvHeaderSize]byte{'F', 'L', 'V', 0x01, 0x01, 0x00, 0x00, 0x00, 0x09}
 	buf.Write(f.Header[:])
-	if _, ok := f.Meta["duration"]; !ok {
-		f.Meta["duration"] = 0.0
-	}
-	if _, ok := f.Meta["lasttimestamp"]; !ok {
-		f.Meta["lasttimestamp"] = 0.0
+	if !noAddExtra {
+		if _, ok := f.Meta["duration"]; !ok {
+			f.Meta["duration"] = 0.0
+		}
+		if _, ok := f.Meta["lasttimestamp"]; !ok {
+			f.Meta["lasttimestamp"] = 0.0
+		}
 	}
 
 	metab := NewAmfEncoderDecoder().EncodeMetaData(f.Meta, f.DebugOrder)
