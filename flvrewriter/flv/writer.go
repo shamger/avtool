@@ -15,6 +15,9 @@ const BUF_LEN = 2048 // NOTE: this MUST be large enough to get header + meta dat
 type FlvWriter struct {
 	PrintTagStartIdx int
 	PrintTagEndIdx   int
+	Option           string
+
+	needWrite bool // 标记一个tag是否需要写入输出文件
 
 	outFileName string
 	outFile     *os.File
@@ -44,6 +47,9 @@ func Open(outFilename string) *FlvWriter {
 	return &FlvWriter{
 		PrintTagStartIdx: 0,
 		PrintTagEndIdx:   0,
+		Option:           "-show",
+
+		needWrite: true,
 
 		outFileName: outFilename,
 		outFile:     file,
@@ -103,6 +109,7 @@ func (w *FlvWriter) GetDebugInfo() string {
 	str := "Duration: " + strconv.FormatFloat(float64(w.maxTimeStamp/1000.0), 'f', 3, 64) + "s\n"
 	str += "Num Audio: " + strconv.FormatInt(int64(w.numAudio), 10) + "\n"
 	str += "Num Video: " + strconv.FormatInt(int64(w.numVideo), 10) + "\n"
+	str += "Max Tag Index: " + strconv.FormatUint(uint64(w.tagIndex), 10) + "\n"
 	return str
 }
 
@@ -202,46 +209,48 @@ func (w *FlvWriter) parseTagHeader(buffer []byte) {
 			log.Fatalf("Failed to read stream id: %v", err)
 		}
 
-		// reset timestamp
-		w.curTag.TimeStamp -= w.baseTimeStamp
-		w.maxTimeStamp = func() uint32 {
-			if w.maxTimeStamp > w.curTag.TimeStamp {
-				return w.maxTimeStamp
+		// 读完tagHeader所有字段后，先处理option
+		w.handleOption()
+
+		if w.needWrite {
+			// reset timestamp
+			w.curTag.TimeStamp -= w.baseTimeStamp
+			w.maxTimeStamp = func() uint32 {
+				if w.maxTimeStamp > w.curTag.TimeStamp {
+					return w.maxTimeStamp
+				} else {
+					return w.curTag.TimeStamp
+				}
+			}()
+			// 跳过AAC头或者AVC头获取基准时戳，哪个先来用哪个作为基准
+			if w.curTag.TagType == TagType_Audio {
+				w.numAudio++
+				if !w.hasOffset && w.numAudio == 2 {
+					w.hasOffset = true
+					log.Printf("Reset to base timestamp(%d): %d", w.curTag.TagType, w.curTag.TimeStamp)
+					w.baseTimeStamp = w.curTag.TimeStamp
+					w.curTag.TimeStamp = 0
+					w.maxTimeStamp = 0
+				}
+			} else if w.curTag.TagType == TagType_Video {
+				w.numVideo++
+				if !w.hasOffset && w.numVideo == 2 {
+					w.hasOffset = true
+					log.Printf("Reset to base timestamp(%d): %d", w.curTag.TagType, w.curTag.TimeStamp)
+					w.baseTimeStamp = w.curTag.TimeStamp
+					w.curTag.TimeStamp = 0
+					w.maxTimeStamp = 0
+				}
 			} else {
-				return w.curTag.TimeStamp
+				log.Fatalf("unknown tag type:%d", w.curTag.TagType)
 			}
-		}()
-		// 跳过AAC头或者AVC头获取基准时戳，哪个先来用哪个作为基准
-		if w.curTag.TagType == TagType_Audio {
-			w.numAudio++
-			if !w.hasOffset && w.numAudio == 2 {
-				w.hasOffset = true
-				log.Printf("Reset to base timestamp(%d): %d", w.curTag.TagType, w.curTag.TimeStamp)
-				w.baseTimeStamp = w.curTag.TimeStamp
-				w.curTag.TimeStamp = 0
-				w.maxTimeStamp = 0
-			}
-		} else if w.curTag.TagType == TagType_Video {
-			w.numVideo++
-			if !w.hasOffset && w.numVideo == 2 {
-				w.hasOffset = true
-				log.Printf("Reset to base timestamp(%d): %d", w.curTag.TagType, w.curTag.TimeStamp)
-				w.baseTimeStamp = w.curTag.TimeStamp
-				w.curTag.TimeStamp = 0
-				w.maxTimeStamp = 0
-			}
-		} else {
-			log.Fatalf("unknown tag type:%d", w.curTag.TagType)
+
+			// tag header 写入文件
+			tagHeader := w.curTag.GetBytes()
+			w.outFile.Write(tagHeader)
 		}
 
-		// tag header 写入文件
-		tagHeader := w.curTag.GetBytes()
-		if w.tagIndex >= w.PrintTagStartIdx && w.tagIndex < w.PrintTagEndIdx {
-			log.Printf("writing tag head[%d]: \n%s", w.tagIndex, w.curTag.GetStr())
-		}
 		w.tagIndex++
-		w.outFile.Write(tagHeader)
-
 		// 重写剩余buffer
 		rest := make([]byte, w.inputBuf.Len())
 		w.inputBuf.Read(rest)
@@ -258,14 +267,44 @@ func (w *FlvWriter) readTagData(buffer []byte) {
 			return int(w.curTag.DataSize) - w.tagDataReadPos
 		}
 	}()
-	w.outFile.Write(buffer[:toRead])
+	if w.needWrite {
+		w.outFile.Write(buffer[:toRead])
+	}
 	w.tagDataReadPos += toRead
 	if w.tagDataReadPos == int(w.curTag.DataSize) {
-		w.lastTagDataSize = w.curTag.DataSize
+		if w.needWrite { // 确实有写入的才需要记录最后一个tag大小
+			w.lastTagDataSize = w.curTag.DataSize
+		}
 		// 写完一个tag data
 		w.curTag.TagType = 0
 		w.curTag.DataSize = 0
 		w.tagDataReadPos = 0
 		w.Write(buffer[toRead:])
 	}
+}
+
+func (w *FlvWriter) handleOption() {
+	switch w.Option {
+	case "-cp":
+		if w.tagIndex >= w.PrintTagStartIdx && w.tagIndex < w.PrintTagEndIdx {
+			w.needWrite = true
+			return
+		} else {
+			if w.curTag.TagType != TagType_Audio && w.curTag.TagType != TagType_Video {
+				w.needWrite = true
+			} else {
+				w.needWrite = false
+			}
+			return
+		}
+	case "-show":
+		fallthrough
+	default:
+		if w.tagIndex >= w.PrintTagStartIdx && w.tagIndex < w.PrintTagEndIdx {
+			log.Printf("writing tag head[%d]: \n%s", w.tagIndex, w.curTag.GetStr())
+		}
+		w.needWrite = true
+		return
+	}
+
 }
