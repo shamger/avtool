@@ -2,6 +2,7 @@ package main
 
 import (
 	"flvrewriter/flv"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		log.Fatalf("Usage: %s <http-flv-url> <output.flv> [<startTagIndex> <endTagIndex>]", os.Args[0])
+		fmt.Printf("Usage: %s <http-flv-url> <output.flv> [<startTagIndex> <endTagIndex>]\n", os.Args[0])
 		return
 	}
 
@@ -42,15 +43,16 @@ func main() {
 
 	// 读取flv数据
 	readBuffer := make([]byte, 4096)
+readLoop:
 	for {
 		select {
 		case <-sigCh:
-			log.Fatalf("User stopped")
-			return
+			log.Printf("User stopped")
+			break readLoop
 		default:
 			if bytesRead, err := io.ReadFull(resp.Body, readBuffer); err == io.EOF {
 				flvWriter.Write(readBuffer[:bytesRead])
-				log.Fatalf("End of file")
+				log.Printf("End of file")
 				return
 			} else if err != nil {
 				log.Fatalf("Failed to read file: %s", err.Error())
@@ -62,4 +64,7 @@ func main() {
 			}
 		}
 	}
+
+	// 到这里说明流没有结束就退出循环，如果最后一个tag还未写完整，需要回退
+	//flvWriter.EraseLastBrokenTag()
 }

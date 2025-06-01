@@ -17,7 +17,8 @@ type FlvWriter struct {
 	PrintTagEndIdx   int
 	Option           string
 
-	needWrite bool // 标记一个tag是否需要写入输出文件
+	needWrite   bool  // 标记一个tag是否需要写入输出文件
+	curFileSize int64 // 已完整写入tag的文件大小
 
 	outFileName string
 	outFile     *os.File
@@ -103,6 +104,7 @@ func (w *FlvWriter) Close() {
 	}
 	// 关闭文件
 	w.outFile.Close()
+	log.Printf("write %s success", w.outFile.Name())
 }
 
 func (w *FlvWriter) GetDebugInfo() string {
@@ -111,6 +113,16 @@ func (w *FlvWriter) GetDebugInfo() string {
 	str += "Num Video: " + strconv.FormatInt(int64(w.numVideo), 10) + "\n"
 	str += "Max Tag Index: " + strconv.FormatUint(uint64(w.tagIndex), 10) + "\n"
 	return str
+}
+
+func (w *FlvWriter) EraseLastBrokenTag() {
+	// TODO 应该整个GOP都删除
+	w.tagIndex--
+	if err := w.outFile.Truncate(w.curFileSize); err != nil {
+		log.Fatalf("Truncate failed: %v", err)
+		return
+	}
+	log.Printf("Erase broken tag success")
 }
 
 func (w *FlvWriter) grabHeader(buffer []byte) {
@@ -275,6 +287,9 @@ func (w *FlvWriter) readTagData(buffer []byte) {
 		if w.needWrite { // 确实有写入的才需要记录最后一个tag大小
 			w.lastTagDataSize = w.curTag.DataSize
 		}
+		// 记录有效文件大小
+		fileInfo, _ := w.outFile.Stat()
+		w.curFileSize = fileInfo.Size()
 		// 写完一个tag data
 		w.curTag.TagType = 0
 		w.curTag.DataSize = 0
