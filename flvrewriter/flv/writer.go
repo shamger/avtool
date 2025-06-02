@@ -172,6 +172,7 @@ func (w *FlvWriter) grabHeader(buffer []byte) {
 		// 解析meta data备用
 		amf := NewAmfEncoderDecoder()
 		w.header.Meta = amf.DecodeMetaData(w.header.ScriptTagData)
+		log.Printf("parse meta data success")
 		// w.header.DebugOrder = amf.GetDebugOrder() // only for debug, no adding any metadata
 		// 写入flv header和script tag
 		w.outFile.Write(w.header.GetBytes(false))

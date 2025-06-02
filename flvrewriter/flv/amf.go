@@ -77,10 +77,24 @@ func (amf *AmfEncoderDecoder) DecodeVal(buff []byte) interface{} {
 		b := buff[amf.readHead]
 		amf.readHead++
 		return b != 0
+	case Amf0Type_Object:
+		var valObj bytes.Buffer
+		valObj.WriteByte(Amf0Type_Object)
+		for buff[amf.readHead] != 0x00 || buff[amf.readHead+1] != 0x00 || buff[amf.readHead+2] != Amf0Type_ObjectEnd {
+			valObj.WriteByte(buff[amf.readHead])
+			amf.readHead++
+		}
+		valObj.WriteByte(buff[amf.readHead])
+		amf.readHead++
+		valObj.WriteByte(buff[amf.readHead])
+		amf.readHead++
+		valObj.WriteByte(buff[amf.readHead])
+		amf.readHead++
+		return valObj.Bytes()
 	case Amf0Type_ObjectEnd:
 		return nil
 	default:
-		log.Fatalf("Unknown amf0 type: %v", amfType)
+		log.Printf("Unknown amf0 type: %v", amfType)
 		return nil
 	}
 }
@@ -117,6 +131,8 @@ func (amf *AmfEncoderDecoder) EncodeVal(val interface{}) []byte {
 		ret[0] = Amf0Type_Boolean
 		ret[1] = byteVal
 		return ret
+	} else if reflect.TypeOf(val) == reflect.TypeOf([]byte{}) {
+		return val.([]byte)
 	} else {
 		log.Fatalf("Unknown amf value type: %v, val:%x", reflect.TypeOf(val), val)
 		return nil
@@ -190,19 +206,27 @@ func (amf *AmfEncoderDecoder) DecodeMetaData(buff []byte) map[string]interface{}
 		log.Fatalf("amf type of onMetaData is not ECMAArray or Object: %d", amftype)
 	}
 
+	mdCount := 0
 	for amf.readHead < len(buff) {
 		key := amf.DecodeKey(buff)
 		amf.debugOrder = append(amf.debugOrder, key)
 		val := amf.DecodeVal(buff)
-		log.Printf("decode meta data key: %s, val: %v", key, val)
+		mdCount++
+		log.Printf("[%d]decode meta data key: %s, val: %v", mdCount, key, val)
+		if val == nil {
+			log.Printf("skip invalid meta data")
+			continue
+		}
 		keyval[key] = val
 		// 过滤掉Metadata后缀
 		if buff[amf.readHead] == 0x00 &&
 			buff[amf.readHead+1] == 0x00 &&
 			buff[amf.readHead+2] == Amf0Type_ObjectEnd {
+			log.Printf("got end of meta data")
 			break
 		}
 	}
+	log.Printf("all meta data are handled")
 	return keyval
 }
 
