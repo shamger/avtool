@@ -2,12 +2,20 @@ package flv
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
+	"flvrewriter/writer"
 	"io"
 	"log"
-	"os"
 	"strconv"
+)
+
+const (
+	WriteType_Default  = iota
+	WriteType_Directly = iota
+	WriteType_RawBin
+	WriteType_Queue
 )
 
 const BUF_LEN = 2048 // NOTE: this MUST be large enough to get header + meta data...
@@ -15,13 +23,11 @@ const BUF_LEN = 2048 // NOTE: this MUST be large enough to get header + meta dat
 type FlvWriter struct {
 	PrintTagStartIdx int
 	PrintTagEndIdx   int
-	Option           string
+	RewriteOption    string
 
-	needWrite   bool  // 标记一个tag是否需要写入输出文件
-	curFileSize int64 // 已完整写入tag的文件大小
-
-	outFileName string
-	outFile     *os.File
+	writeType int
+	needWrite bool // 标记一个tag是否需要写入输出文件
+	writer    writer.Writer
 
 	tagIndex        int
 	lastTagDataSize uint32
@@ -39,21 +45,23 @@ type FlvWriter struct {
 	curTag *TagHeader
 }
 
-func Open(outFilename string) *FlvWriter {
-	file, err := os.OpenFile(outFilename, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		log.Fatalf("Failed to open file: %s", err.Error())
-		return nil
-	}
+func Open(ctx context.Context, outFilename string, wt int) *FlvWriter {
 	return &FlvWriter{
 		PrintTagStartIdx: 0,
 		PrintTagEndIdx:   0,
-		Option:           "-show",
+		RewriteOption:    "-show",
+		writeType:        wt,
 
 		needWrite: true,
 
-		outFileName: outFilename,
-		outFile:     file,
+		writer: func() writer.Writer {
+			switch wt {
+			case WriteType_Queue:
+				return writer.NewQueueWriter(ctx, outFilename)
+			default:
+				return writer.NewFileWriter(outFilename)
+			}
+		}(),
 
 		tagIndex:       0,
 		tagDataReadPos: 0,
@@ -72,39 +80,45 @@ func Open(outFilename string) *FlvWriter {
 }
 
 func (w *FlvWriter) Write(buffer []byte) error {
-	if w.outFile == nil {
+	if w.writer == nil {
 		return errors.New("file not open")
 	}
-	if !w.hasHeader {
-		w.grabHeader(buffer)
-	} else if w.curTag.DataSize > 0 {
-		w.readTagData(buffer)
+	if w.writeType != WriteType_RawBin {
+		if !w.hasHeader {
+			w.grabHeader(buffer)
+		} else if w.curTag.DataSize > 0 {
+			w.readTagData(buffer)
+		} else {
+			w.parseTagHeader(buffer)
+		}
 	} else {
-		w.parseTagHeader(buffer)
+		w.writer.WriteData(buffer)
 	}
 	return nil
 }
 
 func (w *FlvWriter) Close() {
-	// 写入最后一个PrevSize
-	prevSizeb := make([]byte, 4)
-	prevSize := TagHeaderSize + w.lastTagDataSize - 4
-	binary.BigEndian.PutUint32(prevSizeb, uint32(prevSize))
-	if n, err := w.outFile.Write(prevSizeb); err != nil || n != len(prevSizeb) {
-		log.Fatalf("Failed to write prev size: %s, written: %dbytes", err.Error(), n)
-	}
-	// 更新metadata
-	w.header.Meta["duration"] = float64(w.maxTimeStamp) / 1000.0
-	w.header.Meta["lasttimestamp"] = float64(w.maxTimeStamp) / 1.0
-	header := w.header.GetBytes(false)
-	// 重新定位到文件开头写header
-	w.outFile.Seek(0, io.SeekStart)
-	if n, err := w.outFile.Write(header); err != nil || n != len(header) {
-		log.Fatalf("Failed to write header: %s, written: %dbytes", err.Error(), n)
+	if w.writeType != WriteType_RawBin {
+		// 写入最后一个PrevSize
+		prevSizeb := make([]byte, 4)
+		prevSize := TagHeaderSize + w.lastTagDataSize - 4
+		binary.BigEndian.PutUint32(prevSizeb, uint32(prevSize))
+		if n, err := w.writer.WriteData(prevSizeb); err != nil || n != len(prevSizeb) {
+			log.Fatalf("Failed to write prev size: %v, written: %dbytes", err.Error(), n)
+		}
+		// 更新metadata
+		w.header.Meta["duration"] = float64(w.maxTimeStamp) / 1000.0
+		w.header.Meta["lasttimestamp"] = float64(w.maxTimeStamp) / 1.0
+		header := w.header.GetBytes(false)
+		// 重新定位到文件开头写header
+		w.writer.Seek(0, io.SeekStart)
+		if n, err := w.writer.WriteData(header); err != nil || n != len(header) {
+			log.Fatalf("Failed to write header: %v, written: %dbytes", err.Error(), n)
+		}
 	}
 	// 关闭文件
-	w.outFile.Close()
-	log.Printf("write %s success", w.outFile.Name())
+	w.writer.Close()
+	log.Printf("write %s success", w.writer.GetName())
 }
 
 func (w *FlvWriter) GetDebugInfo() string {
@@ -112,17 +126,25 @@ func (w *FlvWriter) GetDebugInfo() string {
 	str += "Num Audio: " + strconv.FormatInt(int64(w.numAudio), 10) + "\n"
 	str += "Num Video: " + strconv.FormatInt(int64(w.numVideo), 10) + "\n"
 	str += "Max Tag Index: " + strconv.FormatUint(uint64(w.tagIndex), 10) + "\n"
+	str += "Write Type: " + func() string {
+		switch w.writeType {
+		case WriteType_Directly:
+			return "Write flv file directly"
+		case WriteType_RawBin:
+			return "Write binary file"
+		case WriteType_Queue:
+			return "Write flv file by queue"
+		default:
+			return "Write flv file directly"
+		}
+	}()
 	return str
 }
 
 func (w *FlvWriter) EraseLastBrokenTag() {
-	// TODO 应该整个GOP都删除
+	// 对齐最后一个完整tag，TODO 待测试
 	w.tagIndex--
-	if err := w.outFile.Truncate(w.curFileSize); err != nil {
-		log.Fatalf("Truncate failed: %v", err)
-		return
-	}
-	log.Printf("Erase broken tag success")
+	w.writer.AlignEntireTag()
 }
 
 func (w *FlvWriter) grabHeader(buffer []byte) {
@@ -175,7 +197,7 @@ func (w *FlvWriter) grabHeader(buffer []byte) {
 		log.Printf("parse meta data success")
 		// w.header.DebugOrder = amf.GetDebugOrder() // only for debug, no adding any metadata
 		// 写入flv header和script tag
-		w.outFile.Write(w.header.GetBytes(false))
+		w.writer.WriteData(w.header.GetBytes(false))
 
 		// 准备开始写音视频tag
 		w.hasHeader = true
@@ -222,7 +244,7 @@ func (w *FlvWriter) parseTagHeader(buffer []byte) {
 			log.Fatalf("Failed to read stream id: %v", err)
 		}
 
-		// 读完tagHeader所有字段后，先处理option
+		// 读完tagHeader所有字段后，先处理rewrite option
 		w.handleOption()
 
 		if w.needWrite {
@@ -260,7 +282,7 @@ func (w *FlvWriter) parseTagHeader(buffer []byte) {
 
 			// tag header 写入文件
 			tagHeader := w.curTag.GetBytes()
-			w.outFile.Write(tagHeader)
+			w.writer.WriteTagHeader(tagHeader)
 		}
 
 		w.tagIndex++
@@ -281,16 +303,17 @@ func (w *FlvWriter) readTagData(buffer []byte) {
 		}
 	}()
 	if w.needWrite {
-		w.outFile.Write(buffer[:toRead])
+		if _, err := w.writer.AppendTagData(buffer[:toRead]); err != nil {
+			log.Printf("append tag data failed:%v", err)
+		}
 	}
 	w.tagDataReadPos += toRead
 	if w.tagDataReadPos == int(w.curTag.DataSize) {
 		if w.needWrite { // 确实有写入的才需要记录最后一个tag大小
 			w.lastTagDataSize = w.curTag.DataSize
 		}
-		// 记录有效文件大小
-		fileInfo, _ := w.outFile.Stat()
-		w.curFileSize = fileInfo.Size()
+		// 结束完整tag
+		w.writer.FinishTagData()
 		// 写完一个tag data
 		w.curTag.TagType = 0
 		w.curTag.DataSize = 0
@@ -300,7 +323,7 @@ func (w *FlvWriter) readTagData(buffer []byte) {
 }
 
 func (w *FlvWriter) handleOption() {
-	switch w.Option {
+	switch w.RewriteOption {
 	case "-cp":
 		if w.tagIndex >= w.PrintTagStartIdx && w.tagIndex < w.PrintTagEndIdx {
 			w.needWrite = true
@@ -322,5 +345,4 @@ func (w *FlvWriter) handleOption() {
 		w.needWrite = true
 		return
 	}
-
 }

@@ -181,6 +181,21 @@ func (amf *AmfEncoderDecoder) EncodeMetaData(meta map[string]interface{}, order 
 	return buf.Bytes()
 }
 
+func (amf *AmfEncoderDecoder) DecodeObject(buff []byte) {
+	for amf.readHead < len(buff) {
+		key := amf.DecodeKey(buff)
+		val := amf.DecodeVal(buff)
+		log.Printf("decode object key: %s, val: %v", key, val)
+		if buff[amf.readHead] == 0x00 &&
+			buff[amf.readHead+1] == 0x00 &&
+			buff[amf.readHead+2] == Amf0Type_ObjectEnd {
+			log.Printf("====got end of object")
+			amf.readHead += 3
+			break
+		}
+	}
+}
+
 func (amf *AmfEncoderDecoder) DecodeMetaData(buff []byte) map[string]interface{} {
 	keyval := make(map[string]interface{})
 	amf.readHead = 0
@@ -201,7 +216,8 @@ func (amf *AmfEncoderDecoder) DecodeMetaData(buff []byte) map[string]interface{}
 		arrayLen := binary.BigEndian.Uint32(alen)
 		log.Printf("onMetaData arrayLen: %d", arrayLen)
 	} else if amftype == Amf0Type_Object {
-		log.Fatalf("onMetaData is not ECMAArray but Object")
+		log.Printf("onMetaData is not ECMAArray but Object: % x", buff[amf.readHead:])
+		amf.DecodeObject(buff)
 	} else {
 		log.Fatalf("amf type of onMetaData is not ECMAArray or Object: %d", amftype)
 	}

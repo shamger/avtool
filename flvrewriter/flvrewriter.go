@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flvrewriter/flv"
 	"fmt"
 	"io"
@@ -10,25 +11,21 @@ import (
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "-h" {
+	if len(os.Args) < 3 {
 		fmt.Printf("Usage: %s <input.flv> <output.flv> [<option> <startTagIndex> <endTagIndex>]\n", os.Args[0])
 		fmt.Printf("option:\n")
 		fmt.Printf("	-show	Show tag indexes between <startTagIndex> and <endTagIndex>\n")
 		fmt.Printf("	-cp	Copy tag indexes between <startTagIndex> and <endTagIndex>\n")
 		return
 	}
-	if len(os.Args) < 3 {
-		fmt.Printf("Usage: %s <input.flv> <output.flv> [<option> <startTagIndex> <endTagIndex>]\n", os.Args[0])
-		return
-	}
 	inputFile := os.Args[1]
 	outputFile := os.Args[2]
 
-	flvWriter := flv.Open(outputFile)
+	flvWriter := flv.Open(context.Background(), outputFile, flv.WriteType_Directly)
 	defer flvWriter.Close()
 
 	if len(os.Args) == 6 {
-		flvWriter.Option = os.Args[3]
+		flvWriter.RewriteOption = os.Args[3]
 		flvWriter.PrintTagStartIdx, _ = strconv.Atoi(os.Args[4])
 		flvWriter.PrintTagEndIdx, _ = strconv.Atoi(os.Args[5])
 	}
