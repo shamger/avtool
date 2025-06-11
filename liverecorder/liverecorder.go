@@ -29,6 +29,6 @@ func main() {
 
 	fmt.Printf("Got StreamUrl: %s\n", streamUrl)
 
-	dumper.Process(streamUrl, outputFilename, flv.WriteType_Default)
+	dumper.Process(streamUrl, outputFilename, flv.WriteType_Queue)
 	fmt.Printf("Stop recording.\n")
 }
