@@ -106,6 +106,7 @@ func (w *FlvWriter) Close() {
 		if n, err := w.writer.WriteData(prevSizeb); err != nil || n != len(prevSizeb) {
 			log.Fatalf("Failed to write prev size: %v, written: %dbytes", err.Error(), n)
 		}
+		log.Printf("write last prev size: % x", prevSizeb)
 		// 更新metadata
 		w.header.Meta["duration"] = float64(w.maxTimeStamp) / 1000.0
 		w.header.Meta["lasttimestamp"] = float64(w.maxTimeStamp) / 1.0
@@ -115,6 +116,7 @@ func (w *FlvWriter) Close() {
 		if n, err := w.writer.WriteData(header); err != nil || n != len(header) {
 			log.Fatalf("Failed to write header: %v, written: %dbytes", err.Error(), n)
 		}
+		log.Printf("rewrite header success")
 	}
 	// 关闭文件
 	w.writer.Close()
