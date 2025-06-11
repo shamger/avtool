@@ -13,7 +13,7 @@ type fileWriter struct {
 }
 
 func NewFileWriter(outFileName string) Writer {
-	file, err := os.OpenFile(outFileName, os.O_RDWR|os.O_CREATE, 0666)
+	file, err := os.OpenFile(outFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open file: %v", err)
 		return nil

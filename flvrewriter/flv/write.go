@@ -284,6 +284,10 @@ func (w *FlvWriter) parseTagHeader(buffer []byte) {
 
 			// tag header 写入文件
 			tagHeader := w.curTag.GetBytes()
+			if tagHeader[4] != w.curTag.TagType {
+				log.Fatalf("tag type not match:tagHeader:% x <- prevSize:% x, tagType:%x",
+					tagHeader, w.curTag.PrevSize, w.curTag.TagType)
+			}
 			w.writer.WriteTagHeader(tagHeader)
 		}
 
