@@ -27,8 +27,9 @@ func createRandomCookie() string {
 }
 
 type LiveRoom struct {
-	LiveUrl  string
-	streamId string
+	LiveUrl    string
+	FileFormat string
+	streamId   string
 }
 
 func (d *LiveRoom) GetStreamUrl() (string, error) {
@@ -104,10 +105,10 @@ func (d *LiveRoom) getStreamUrlInfoFromBody(body string) ([]*utils.StreamUrlInfo
 func (d *LiveRoom) parseStreamUrlData(data gjson.Result) []*utils.StreamUrlInfo {
 	streamUrlInfos := make([]*utils.StreamUrlInfo, 0)
 	data.ForEach(func(key, value gjson.Result) bool {
-		flv := value.Get("main.flv").String()
-		url, err := url.Parse(flv)
+		streamUrl := value.Get("main." + d.FileFormat).String()
+		url, err := url.Parse(streamUrl)
 		if err != nil {
-			log.Printf("invalid url: %s", flv)
+			log.Printf("invalid url: %s", streamUrl)
 			return true
 		}
 		paramString := value.Get("main.sdk_params").String()
