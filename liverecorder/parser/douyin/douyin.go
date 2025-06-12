@@ -63,6 +63,7 @@ func (d *LiveRoom) getStreamUrlInfoFromBody(body string) ([]*utils.StreamUrlInfo
 	} else if !isLiving {
 		return nil, fmt.Errorf("not living")
 	}
+
 	// parse all stream urls
 	streamUrlInfos := make([]*utils.StreamUrlInfo, 0)
 	reg, err := regexp.Compile(streamUrlInfoRegex)
@@ -154,14 +155,18 @@ func (d *LiveRoom) isLiving(body string) (bool, error) {
 		return false, err
 	}
 
+	isLiving := roomStatusJson.Get("state.roomStore.roomInfo.room.status_str").String() == "2"
+	if !isLiving {
+		return false, nil
+	}
+
 	// 记录streamId后续检查
 	d.streamId = roomStatusJson.Get("state.streamStore.streamData.H264_streamData.common.stream").String()
 	if d.streamId == "" {
 		return false, fmt.Errorf(`no streamId found`)
 	}
 
-	isLiving := roomStatusJson.Get("state.roomStore.roomInfo.room.status_str").String() == "2"
-	return isLiving, nil
+	return true, nil
 }
 
 func (d *LiveRoom) getRoomStatusJson(body string) (*gjson.Result, error) {
