@@ -4,14 +4,20 @@ import (
 	"context"
 	flv_helper "flvrewriter/flv/helper"
 	"flvrewriter/utils"
+	"fmt"
 	"log"
 )
+
+type chanMessage struct {
+	gopSize         int
+	newKeyTimestamp uint32
+}
 
 type queueWriter struct {
 	fileWriter *fileWriter
 	queue      *utils.Queue
 	curTag     *flv_helper.FlvTag
-	gopCh      chan int
+	gopCh      chan *chanMessage
 }
 
 func NewQueueWriter(ctx context.Context, outFileName string) Writer {
@@ -19,7 +25,7 @@ func NewQueueWriter(ctx context.Context, outFileName string) Writer {
 		fileWriter: NewFileWriter(outFileName).(*fileWriter),
 		queue:      utils.NewQueue(),
 		curTag:     &flv_helper.FlvTag{},
-		gopCh:      make(chan int),
+		gopCh:      make(chan *chanMessage),
 	}
 	queueWriter.startFlushTags(ctx)
 	return queueWriter
@@ -33,10 +39,19 @@ func (w *queueWriter) startFlushTags(ctx context.Context) {
 			case <-ctx.Done():
 				log.Printf("flushing worker is stopped")
 				return
-			case size := <-w.gopCh:
-				gopNum := size - 1
+			case msg := <-w.gopCh:
+				gopNum := msg.gopSize
+				notInscreasingCnt := 0
+				notInscreasingLogSample := ""
 				log.Printf("start to flush one gop: %d", gopNum)
 				for i := 0; i < gopNum; i++ {
+					curTimestamp := w.queue.Peek().(*flv_helper.FlvTag).GetTimestamp()
+					if curTimestamp >= msg.newKeyTimestamp {
+						notInscreasingCnt++
+						notInscreasingLogSample = fmt.Sprintf("timestamp is not increasing, %d > %d",
+							curTimestamp, msg.newKeyTimestamp)
+						//continue // 暂时不调整写入顺序
+					}
 					flvTag, ok := w.queue.Dequeue().(*flv_helper.FlvTag)
 					if !ok {
 						continue
@@ -45,7 +60,7 @@ func (w *queueWriter) startFlushTags(ctx context.Context) {
 					w.WriteData(flvTag.Data.Bytes())
 					//log.Printf("write tag header: % x", flvTag.Header.Bytes())
 				}
-				log.Printf("flush one gop done")
+				log.Printf("flush one gop done, %s, repeat %d times", notInscreasingLogSample, notInscreasingCnt)
 			}
 		}
 	}()
@@ -67,7 +82,10 @@ func (w *queueWriter) AppendTagData(b []byte) (int, error) {
 func (w *queueWriter) FinishTagData() {
 	if w.curTag.IsKeyTag() && w.queue.Size() > 0 {
 		log.Printf("notify to flush one gop, queue size:%d", w.queue.Size())
-		w.gopCh <- w.queue.Size()
+		w.gopCh <- &chanMessage{
+			gopSize:         w.queue.Size() - 1,
+			newKeyTimestamp: w.curTag.GetTimestamp(),
+		}
 	}
 	//log.Printf("equeue header: % x", w.curTag.Header.Bytes())
 	w.queue.Enqueue(w.curTag)

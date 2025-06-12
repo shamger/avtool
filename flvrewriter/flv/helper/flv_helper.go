@@ -37,3 +37,8 @@ func (f *FlvTag) IsVideoTag() bool {
 		return false
 	}
 }
+
+func (f *FlvTag) GetTimestamp() uint32 {
+	timestamp := uint32(f.Header.Bytes()[5]&0x01)<<16 | uint32(f.Header.Bytes()[6]&0xFF)<<8 | uint32(f.Header.Bytes()[7]&0xFF)
+	return timestamp
+}
