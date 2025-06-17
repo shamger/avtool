@@ -1,9 +1,10 @@
 package main
 
 import (
-	"flvdumper/dumper"
+	flv_dumper "flvdumper/dumper"
 	"flvrewriter/flv"
 	"fmt"
+	hls_dumper "hlsdumper/dumper"
 	"liverecorder/parser"
 	"os"
 	"strings"
@@ -53,6 +54,10 @@ func main() {
 
 	fmt.Printf("Got StreamUrl: %s\n", streamUrl)
 
-	dumper.Process(streamUrl, outputFilename, flv.WriteType_Queue)
+	if format == FileFormat_HLS {
+		hls_dumper.Process(streamUrl, outputFilename)
+	} else {
+		flv_dumper.Process(streamUrl, outputFilename, flv.WriteType_Queue)
+	}
 	fmt.Printf("Stop recording.\n")
 }
