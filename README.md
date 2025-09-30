@@ -8,3 +8,6 @@
 3. -queue: 通过tag队列每次写入完整tag
 - liverecorder
 1. 直播间录制，支持：抖音
+- 参考
+    - https://github.com/coreyauger/flv-streamer-2-file
+    - https://en.wikipedia.org/wiki/Flash_Video
